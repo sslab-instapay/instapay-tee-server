@@ -17,9 +17,11 @@ import (
 	"context"
 	"strconv"
 	"google.golang.org/grpc"
-	"github.com/sslab-instapay/instapay-go-server/repository"
-	pbServer "github.com/sslab-instapay/instapay-go-server/proto/server"
-	pbClient "github.com/sslab-instapay/instapay-go-server/proto/client"
+	"github.com/sslab-instapay/instapay-tee-server/repository"
+	pbServer "github.com/sslab-instapay/instapay-tee-server/proto/server"
+	pbClient "github.com/sslab-instapay/instapay-tee-server/proto/client"
+	"unsafe"
+	"reflect"
 )
 
 
@@ -45,19 +47,59 @@ func SendAgreementRequest(pn int64, address string, w pbClient.AgreeRequestsMess
 	defer conn.Close()
 
 	client := pbClient.NewClientClient(conn)
-	message := w
-
 	// TODO: ecall_create_ag_req_msg_w를 호출하여, agreement request 메시지와 서명 생성
+	var channelIds []int
+	var amounts []int
+	for _, channelPayment := range w.ChannelPayments.GetChannelPayments(){
+		channelIds = append(channelIds, int(channelPayment.ChannelId))
+		amounts = append(amounts, int(channelPayment.Amount))
+	}
+	var channelSlice []C.uint
 
-	_, err = client.AgreementRequest(context.Background(), &message)  // TODO: byte stream으로 메시지와 서명을 클라이언트에게 전달
+	for i := range channelIds{
+		channelSlice = append(channelSlice, C.uint(i))
+	}
+
+	var amountSlice []C.int
+
+	for i := range amounts{
+		amountSlice = append(amountSlice, C.uint(i))
+	}
+	var originalMessage *C.uchar
+	var signature *C.uchar
+
+	//void ecall_create_ag_req_msg_w(unsigned int payment_num, unsigned int payment_size, unsigned int *channel_ids, int *amount, unsigned char **original_msg, unsigned char **output);
+	C.ecall_create_ag_req_msg_w(C.uint(pn), C.uint(len(channelSlice)), &channelSlice[0], &amountSlice[0], originalMessage, signature)
+
+	hdr1 := reflect.SliceHeader{
+		Data: uintptr(unsafe.Pointer(originalMessage)),
+		Len:  int(44),
+		Cap:  int(44),
+	}
+	s1 := *(*[]C.uchar)(unsafe.Pointer(&hdr1))
+
+	hdr2 := reflect.SliceHeader{
+		Data: uintptr(unsafe.Pointer(signature)),
+		Len:  int(65),
+		Cap:  int(65),
+	}
+	s2 := *(*[]C.uchar)(unsafe.Pointer(&hdr2))
+	originalMessageStr := fmt.Sprintf("02x", s1)
+	signatureStr := fmt.Sprintf("02x", s2)
+
+
+	r, err := client.AgreementRequest(context.Background(), &pbClient.AgreeRequestsMessage{PaymentNumber: int64(pn), OriginalMessage: originalMessageStr, Signature: signatureStr})  // TODO: byte stream으로 메시지와 서명을 클라이언트에게 전달
 	if err != nil {
 		log.Println(err)
 	}
 
-	// TODO: ecall_verify_ag_res_msg_w를 호출하여, agreement response 메시지의 서명 검증
+	//unsigned int ecall_verify_ag_res_msg_w(unsigned char *pubaddr, unsigned char *res_msg, unsigned char *res_sig);
+	if r.Result{
+		C.ecall_verify_ag_res_msg_w(address, &([]C.uchar(originalMessage)[0]), &([]C.uchar(signature)[0]))
+	}
 
 	rwMutex.Lock()
-	C.ecall_update_sentagr_list_w(C.uint(pn), &([]C.uchar(address))[0])
+	C.ecall_update_sentagr_list_w(C.uint(pn), &([]C.uchar(address)[0]))
 	rwMutex.Unlock()
 
 	//fmt.Println("AGREED: " + address)
@@ -81,20 +123,63 @@ func SendUpdateRequest(pn int64, address string, w pbClient.AgreeRequestsMessage
 	defer conn.Close()
 
 	client := pbClient.NewClientClient(conn)
+
+	var channelIds []int
+	var amounts []int
+	for _, channelPayment := range w.ChannelPayments.GetChannelPayments(){
+		channelIds = append(channelIds, int(channelPayment.ChannelId))
+		amounts = append(amounts, int(channelPayment.Amount))
+	}
+	var channelSlice []C.uint
+
+	for i := range channelIds{
+		channelSlice = append(channelSlice, C.uint(i))
+	}
+
+	var amountSlice []C.int
+
+	for i := range amounts{
+		amountSlice = append(amountSlice, C.uint(i))
+	}
+	var originalMessage *C.uchar
+	var signature *C.uchar
+
+	// TODO: ecall_create_ud_req_msg_w를 호출하여, update request 메시지와 서명 생성
+	// void ecall_create_ud_req_msg_w(unsigned int payment_num, unsigned int payment_size, unsigned int *channel_ids, int *amount, unsigned char **original_msg, unsigned char **output)
+	C.ecall_create_ud_req_msg_w(C.uint(pn), C.uint(len(channelSlice)), &channelSlice[0], &amountSlice[0], originalMessage, signature)
+
+	hdr1 := reflect.SliceHeader{
+		Data: uintptr(unsafe.Pointer(originalMessage)),
+		Len:  int(44),
+		Cap:  int(44),
+	}
+	s1 := *(*[]C.uchar)(unsafe.Pointer(&hdr1))
+
+	hdr2 := reflect.SliceHeader{
+		Data: uintptr(unsafe.Pointer(signature)),
+		Len:  int(65),
+		Cap:  int(65),
+	}
+	s2 := *(*[]C.uchar)(unsafe.Pointer(&hdr2))
+	originalMessageStr := fmt.Sprintf("02x", s1)
+	signatureStr := fmt.Sprintf("02x", s2)
+
 	rqm := pbClient.UpdateRequestsMessage{		/* convert AgreeRequestsMessage to UpdateRequestsMessage */
 		PaymentNumber:   w.PaymentNumber,
 		ChannelPayments: w.ChannelPayments,
-		Amount:          w.Amount}
+		OriginalMessage: originalMessageStr,
+		Signature: signatureStr,
+			}
 
-	// TODO: ecall_create_ud_req_msg_w를 호출하여, update request 메시지와 서명 생성
-		
-	_, err = client.UpdateRequest(context.Background(), &rqm)	// TODO: byte stream으로 메시지와 서명을 클라이언트에게 전달
+	r, err := client.UpdateRequest(context.Background(), &rqm)	// TODO: byte stream으로 메시지와 서명을 클라이언트에게 전달
 	if err != nil {
 		log.Fatal(err)
 	}
-	//fmt.Println("UPDATED")
 
-	// TODO: ecall_verify_ud_res_msg_w를 호출하여, update response 메시지의 서명 검증
+	if r.Result{
+		C.ecall_verify_ud_res_msg_w(&([]C.uchar(address)[0]), &([]C.uchar(r.OriginalMessage)[0]), &([]C.uchar(r.Signature)[0]))
+	}
+
 
 	rwMutex.Lock()
 	C.ecall_update_sentupt_list_w(C.uint(pn), &([]C.uchar(address))[0])
@@ -121,8 +206,27 @@ func SendConfirmPayment(pn int, address string) {
 	client := pbClient.NewClientClient(conn)
 
 	// TODO: ecall_craete_confirm_msg_w를 호출하여, payment confirm 메시지와 서명 생성
+	var originalMessage *C.uchar
+	var signature *C.uchar
+	C.ecall_create_confirm_msg_w(C.uint(int32(pn)), originalMessage, signature)
 
-	_, err = client.ConfirmPayment(context.Background(), &pbClient.ConfirmRequestsMessage{PaymentNumber: int64(pn)})	// TODO: byte stream으로 메시지와 서명을 클라이언트에게 전달
+	hdr1 := reflect.SliceHeader{
+		Data: uintptr(unsafe.Pointer(signature)),
+		Len:  int(44),
+		Cap:  int(44),
+	}
+	s1 := *(*[]C.uchar)(unsafe.Pointer(&hdr1))
+
+	hdr2 := reflect.SliceHeader{
+		Data: uintptr(unsafe.Pointer(signature)),
+		Len:  int(65),
+		Cap:  int(65),
+	}
+	s2 := *(*[]C.uchar)(unsafe.Pointer(&hdr2))
+	originalMessageStr := fmt.Sprintf("02x", s1)
+	signatureStr := fmt.Sprintf("02x", s2)
+
+	_, err = client.ConfirmPayment(context.Background(), &pbClient.ConfirmRequestsMessage{PaymentNumber: int64(pn), OriginalMessage: originalMessageStr, Signature: signatureStr},)	// TODO: byte stream으로 메시지와 서명을 클라이언트에게 전달
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -190,7 +294,7 @@ func SearchPath(pn int64, amount int64) ([]string, map[string]pbClient.AgreeRequ
 	rqmf := pbClient.AgreeRequestsMessage{
 		PaymentNumber:   pn,
 		ChannelPayments: &pbClient.ChannelPayments{ChannelPayments: cpsf},
-		Amount:          amount}
+		}
 	w["0000000000000000000000000000000000000001"] = rqmf
 
 	for i:= 2; i < 9; i++ {
@@ -200,7 +304,7 @@ func SearchPath(pn int64, amount int64) ([]string, map[string]pbClient.AgreeRequ
 		rqm := pbClient.AgreeRequestsMessage{
 			PaymentNumber:   pn,
 			ChannelPayments: &pbClient.ChannelPayments{ChannelPayments: cps},
-			Amount:          amount}
+			}
 		t := i / 10
 		o := i % 10
 		s := "00000000000000000000000000000000000000" + strconv.Itoa(t) + strconv.Itoa(o)			
@@ -212,7 +316,7 @@ func SearchPath(pn int64, amount int64) ([]string, map[string]pbClient.AgreeRequ
 	rqml := pbClient.AgreeRequestsMessage{
 		PaymentNumber:   pn,
 		ChannelPayments: &pbClient.ChannelPayments{ChannelPayments: cpsl},
-		Amount:          amount}
+		}
 	w["0000000000000000000000000000000000000009"] = rqml
 
 	return p, w
