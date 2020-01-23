@@ -18,10 +18,9 @@ import (
 	"strconv"
 	"google.golang.org/grpc"
 	"github.com/sslab-instapay/instapay-tee-server/repository"
+	"github.com/sslab-instapay/instapay-tee-server/util"
 	pbServer "github.com/sslab-instapay/instapay-tee-server/proto/server"
 	pbClient "github.com/sslab-instapay/instapay-tee-server/proto/client"
-	"unsafe"
-	"reflect"
 )
 
 
@@ -47,7 +46,6 @@ func SendAgreementRequest(pn int64, address string, w pbClient.AgreeRequestsMess
 	defer conn.Close()
 
 	client := pbClient.NewClientClient(conn)
-	// TODO: ecall_create_ag_req_msg_w를 호출하여, agreement request 메시지와 서명 생성
 	var channelIds []int
 	var amounts []int
 	for _, channelPayment := range w.ChannelPayments.GetChannelPayments(){
@@ -71,31 +69,18 @@ func SendAgreementRequest(pn int64, address string, w pbClient.AgreeRequestsMess
 	//void ecall_create_ag_req_msg_w(unsigned int payment_num, unsigned int payment_size, unsigned int *channel_ids, int *amount, unsigned char **original_msg, unsigned char **output);
 	C.ecall_create_ag_req_msg_w(C.uint(pn), C.uint(len(channelSlice)), &channelSlice[0], &amountSlice[0], originalMessage, signature)
 
-	hdr1 := reflect.SliceHeader{
-		Data: uintptr(unsafe.Pointer(originalMessage)),
-		Len:  int(44),
-		Cap:  int(44),
-	}
-	s1 := *(*[]C.uchar)(unsafe.Pointer(&hdr1))
-
-	hdr2 := reflect.SliceHeader{
-		Data: uintptr(unsafe.Pointer(signature)),
-		Len:  int(65),
-		Cap:  int(65),
-	}
-	s2 := *(*[]C.uchar)(unsafe.Pointer(&hdr2))
-	originalMessageStr := fmt.Sprintf("02x", s1)
-	signatureStr := fmt.Sprintf("02x", s2)
+	originalMessageByte, signatureByte := util.ConvertPointerToByte(originalMessage, signature)
 
 
-	r, err := client.AgreementRequest(context.Background(), &pbClient.AgreeRequestsMessage{PaymentNumber: int64(pn), OriginalMessage: originalMessageStr, Signature: signatureStr})  // TODO: byte stream으로 메시지와 서명을 클라이언트에게 전달
+	r, err := client.AgreementRequest(context.Background(), &pbClient.AgreeRequestsMessage{PaymentNumber: int64(pn), OriginalMessage: originalMessageByte, Signature: signatureByte})  // TODO: byte stream으로 메시지와 서명을 클라이언트에게 전달
 	if err != nil {
 		log.Println(err)
 	}
 
 	//unsigned int ecall_verify_ag_res_msg_w(unsigned char *pubaddr, unsigned char *res_msg, unsigned char *res_sig);
 	if r.Result{
-		C.ecall_verify_ag_res_msg_w(address, &([]C.uchar(originalMessage)[0]), &([]C.uchar(signature)[0]))
+		agreementOriginalMessage, agreementSignature := util.ConvertByteToPointer(r.OriginalMessage, r.Signature)
+		C.ecall_verify_ag_res_msg_w(address, agreementOriginalMessage, agreementSignature)
 	}
 
 	rwMutex.Lock()
@@ -144,40 +129,26 @@ func SendUpdateRequest(pn int64, address string, w pbClient.AgreeRequestsMessage
 	var originalMessage *C.uchar
 	var signature *C.uchar
 
-	// TODO: ecall_create_ud_req_msg_w를 호출하여, update request 메시지와 서명 생성
 	// void ecall_create_ud_req_msg_w(unsigned int payment_num, unsigned int payment_size, unsigned int *channel_ids, int *amount, unsigned char **original_msg, unsigned char **output)
 	C.ecall_create_ud_req_msg_w(C.uint(pn), C.uint(len(channelSlice)), &channelSlice[0], &amountSlice[0], originalMessage, signature)
 
-	hdr1 := reflect.SliceHeader{
-		Data: uintptr(unsafe.Pointer(originalMessage)),
-		Len:  int(44),
-		Cap:  int(44),
-	}
-	s1 := *(*[]C.uchar)(unsafe.Pointer(&hdr1))
-
-	hdr2 := reflect.SliceHeader{
-		Data: uintptr(unsafe.Pointer(signature)),
-		Len:  int(65),
-		Cap:  int(65),
-	}
-	s2 := *(*[]C.uchar)(unsafe.Pointer(&hdr2))
-	originalMessageStr := fmt.Sprintf("02x", s1)
-	signatureStr := fmt.Sprintf("02x", s2)
+	originalMessageByte, signatureByte := util.ConvertPointerToByte(originalMessage, signature)
 
 	rqm := pbClient.UpdateRequestsMessage{		/* convert AgreeRequestsMessage to UpdateRequestsMessage */
 		PaymentNumber:   w.PaymentNumber,
 		ChannelPayments: w.ChannelPayments,
-		OriginalMessage: originalMessageStr,
-		Signature: signatureStr,
-			}
+		OriginalMessage: originalMessageByte,
+		Signature: signatureByte,
+		}
 
-	r, err := client.UpdateRequest(context.Background(), &rqm)	// TODO: byte stream으로 메시지와 서명을 클라이언트에게 전달
+	r, err := client.UpdateRequest(context.Background(), &rqm)
 	if err != nil {
 		log.Fatal(err)
 	}
 
 	if r.Result{
-		C.ecall_verify_ud_res_msg_w(&([]C.uchar(address)[0]), &([]C.uchar(r.OriginalMessage)[0]), &([]C.uchar(r.Signature)[0]))
+		updateOriginalMessage, updateSignature := util.ConvertByteToPointer(r.OriginalMessage, r.Signature)
+		C.ecall_verify_ud_res_msg_w(&([]C.uchar(address)[0]), updateOriginalMessage, updateSignature)
 	}
 
 
@@ -205,30 +176,15 @@ func SendConfirmPayment(pn int, address string) {
 
 	client := pbClient.NewClientClient(conn)
 
-	// TODO: ecall_craete_confirm_msg_w를 호출하여, payment confirm 메시지와 서명 생성
 	var originalMessage *C.uchar
 	var signature *C.uchar
 	C.ecall_create_confirm_msg_w(C.uint(int32(pn)), originalMessage, signature)
 
-	hdr1 := reflect.SliceHeader{
-		Data: uintptr(unsafe.Pointer(signature)),
-		Len:  int(44),
-		Cap:  int(44),
-	}
-	s1 := *(*[]C.uchar)(unsafe.Pointer(&hdr1))
+	originalMessageByte, signatureByte := util.ConvertPointerToByte(originalMessage, signature)
 
-	hdr2 := reflect.SliceHeader{
-		Data: uintptr(unsafe.Pointer(signature)),
-		Len:  int(65),
-		Cap:  int(65),
-	}
-	s2 := *(*[]C.uchar)(unsafe.Pointer(&hdr2))
-	originalMessageStr := fmt.Sprintf("02x", s1)
-	signatureStr := fmt.Sprintf("02x", s2)
-
-	_, err = client.ConfirmPayment(context.Background(), &pbClient.ConfirmRequestsMessage{PaymentNumber: int64(pn), OriginalMessage: originalMessageStr, Signature: signatureStr},)	// TODO: byte stream으로 메시지와 서명을 클라이언트에게 전달
+	_, err = client.ConfirmPayment(context.Background(), &pbClient.ConfirmRequestsMessage{PaymentNumber: int64(pn), OriginalMessage: originalMessageByte, Signature: signatureByte},)
 	if err != nil {
-		log.Fatal(err)
+		log.Println(err)
 	}
 }
 
