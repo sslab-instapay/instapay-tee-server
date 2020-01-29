@@ -11,8 +11,8 @@ import (
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/ethclient"
 	"github.com/ethereum/go-ethereum"
-	"github.com/sslab-instapay/instapay-go-server/repository"
-	instapay "github.com/sslab-instapay/instapay-go-server/contracts"
+	"github.com/sslab-instapay/instapay-tee-server/repository"
+	instapay "github.com/sslab-instapay/instapay-tee-server/contracts"
 )
 
 var EthereumConfig = map[string]string{

@@ -12,9 +12,9 @@ import (
 	"flag"
 	"os"
 	"github.com/gin-gonic/gin"
-	"github.com/sslab-instapay/instapay-go-server/router"
-	"github.com/sslab-instapay/instapay-go-server/config"
-	serverGrpc "github.com/sslab-instapay/instapay-go-server/grpc"
+	"github.com/sslab-instapay/instapay-tee-server/router"
+	"github.com/sslab-instapay/instapay-tee-server/config"
+	serverGrpc "github.com/sslab-instapay/instapay-tee-server/grpc"
 )
 
 func StartWebServer() {

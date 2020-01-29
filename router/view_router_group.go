@@ -5,7 +5,7 @@ import (
 	"net/http"
 	"log"
 	//"github.com/sslab-instapay/instapay-go-server/config"
-	"github.com/sslab-instapay/instapay-go-server/repository"
+	"github.com/sslab-instapay/instapay-tee-server/repository"
 	//"github.com/sslab-instapay/instapay-go-server/model"
 )
 
