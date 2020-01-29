@@ -18,9 +18,10 @@ import (
 	"strconv"
 	"google.golang.org/grpc"
 	"github.com/sslab-instapay/instapay-tee-server/repository"
-	"github.com/sslab-instapay/instapay-tee-server/util"
 	pbServer "github.com/sslab-instapay/instapay-tee-server/proto/server"
 	pbClient "github.com/sslab-instapay/instapay-tee-server/proto/client"
+	"unsafe"
+	"reflect"
 )
 
 
@@ -61,25 +62,24 @@ func SendAgreementRequest(pn int64, address string, w pbClient.AgreeRequestsMess
 	var amountSlice []C.int
 
 	for i := range amounts{
-		amountSlice = append(amountSlice, C.uint(i))
+		amountSlice = append(amountSlice, C.int(i))
 	}
 	var originalMessage *C.uchar
 	var signature *C.uchar
 
 	//void ecall_create_ag_req_msg_w(unsigned int payment_num, unsigned int payment_size, unsigned int *channel_ids, int *amount, unsigned char **original_msg, unsigned char **output);
-	C.ecall_create_ag_req_msg_w(C.uint(pn), C.uint(len(channelSlice)), &channelSlice[0], &amountSlice[0], originalMessage, signature)
+	C.ecall_create_ag_req_msg_w(C.uint(pn), C.uint(len(channelSlice)), &channelSlice[0], &amountSlice[0], &originalMessage, &signature)
 
-	originalMessageByte, signatureByte := util.ConvertPointerToByte(originalMessage, signature)
+	originalMessageByte, signatureByte := convertPointerToByte(originalMessage, signature)
 
 
-	r, err := client.AgreementRequest(context.Background(), &pbClient.AgreeRequestsMessage{PaymentNumber: int64(pn), OriginalMessage: originalMessageByte, Signature: signatureByte})  // TODO: byte stream으로 메시지와 서명을 클라이언트에게 전달
+	r, err := client.AgreementRequest(context.Background(), &pbClient.AgreeRequestsMessage{PaymentNumber: int64(pn), OriginalMessage: originalMessageByte, Signature: signatureByte})
 	if err != nil {
 		log.Println(err)
 	}
 
-	//unsigned int ecall_verify_ag_res_msg_w(unsigned char *pubaddr, unsigned char *res_msg, unsigned char *res_sig);
 	if r.Result{
-		agreementOriginalMessage, agreementSignature := util.ConvertByteToPointer(r.OriginalMessage, r.Signature)
+		agreementOriginalMessage, agreementSignature := convertByteToPointer(r.OriginalMessage, r.Signature)
 		C.ecall_verify_ag_res_msg_w(address, agreementOriginalMessage, agreementSignature)
 	}
 
@@ -124,15 +124,15 @@ func SendUpdateRequest(pn int64, address string, w pbClient.AgreeRequestsMessage
 	var amountSlice []C.int
 
 	for i := range amounts{
-		amountSlice = append(amountSlice, C.uint(i))
+		amountSlice = append(amountSlice, C.int(i))
 	}
 	var originalMessage *C.uchar
 	var signature *C.uchar
 
 	// void ecall_create_ud_req_msg_w(unsigned int payment_num, unsigned int payment_size, unsigned int *channel_ids, int *amount, unsigned char **original_msg, unsigned char **output)
-	C.ecall_create_ud_req_msg_w(C.uint(pn), C.uint(len(channelSlice)), &channelSlice[0], &amountSlice[0], originalMessage, signature)
+	C.ecall_create_ud_req_msg_w(C.uint(pn), C.uint(len(channelSlice)), &channelSlice[0], &amountSlice[0], &originalMessage, &signature)
 
-	originalMessageByte, signatureByte := util.ConvertPointerToByte(originalMessage, signature)
+	originalMessageByte, signatureByte := convertPointerToByte(originalMessage, signature)
 
 	rqm := pbClient.UpdateRequestsMessage{		/* convert AgreeRequestsMessage to UpdateRequestsMessage */
 		PaymentNumber:   w.PaymentNumber,
@@ -147,10 +147,9 @@ func SendUpdateRequest(pn int64, address string, w pbClient.AgreeRequestsMessage
 	}
 
 	if r.Result{
-		updateOriginalMessage, updateSignature := util.ConvertByteToPointer(r.OriginalMessage, r.Signature)
+		updateOriginalMessage, updateSignature := convertByteToPointer(r.OriginalMessage, r.Signature)
 		C.ecall_verify_ud_res_msg_w(&([]C.uchar(address)[0]), updateOriginalMessage, updateSignature)
 	}
-
 
 	rwMutex.Lock()
 	C.ecall_update_sentupt_list_w(C.uint(pn), &([]C.uchar(address))[0])
@@ -178,9 +177,9 @@ func SendConfirmPayment(pn int, address string) {
 
 	var originalMessage *C.uchar
 	var signature *C.uchar
-	C.ecall_create_confirm_msg_w(C.uint(int32(pn)), originalMessage, signature)
+	C.ecall_create_confirm_msg_w(C.uint(int32(pn)), &originalMessage, &signature)
 
-	originalMessageByte, signatureByte := util.ConvertPointerToByte(originalMessage, signature)
+	originalMessageByte, signatureByte := convertPointerToByte(originalMessage, signature)
 
 	_, err = client.ConfirmPayment(context.Background(), &pbClient.ConfirmRequestsMessage{PaymentNumber: int64(pn), OriginalMessage: originalMessageByte, Signature: signatureByte},)
 	if err != nil {
@@ -326,4 +325,53 @@ func StartGrpcServer() {
 	pbServer.RegisterServerServer(grpcServer, &ServerGrpc{})
 
 	grpcServer.Serve(lis)
+}
+
+func convertByteToPointer(originalMsg []byte, signature []byte) (*C.uchar, *C.uchar){
+
+	var uOriginal [44]C.uchar
+	var uSignature [65]C.uchar
+
+	for i := 0; i < 44; i++{
+		uOriginal[i] = C.uchar(originalMsg[i])
+	}
+
+	for i := 0; i < 65; i++{
+		uSignature[i] = C.uchar(signature[i])
+	}
+
+	cOriginalMsg := (*C.uchar)(unsafe.Pointer(&uOriginal[0]))
+	cSignature := (*C.uchar)(unsafe.Pointer(&uSignature[0]))
+
+	return cOriginalMsg, cSignature
+}
+
+func convertPointerToByte(originalMsg *C.uchar, signature *C.uchar)([]byte, []byte){
+
+	var returnMsg []byte
+	var returnSignature []byte
+
+	replyMsgHdr := reflect.SliceHeader{
+		Data: uintptr(unsafe.Pointer(originalMsg)),
+		Len: int(44),
+		Cap: int(44),
+	}
+	replyMsgS := *(*[]C.uchar)(unsafe.Pointer(&replyMsgHdr))
+
+	replySigHdr := reflect.SliceHeader{
+		Data: uintptr(unsafe.Pointer(signature)),
+		Len: int(65),
+		Cap: int(65),
+	}
+	replySigS := *(*[]C.uchar)(unsafe.Pointer(&replySigHdr))
+
+	for i := 0; i < 44; i++{
+		returnMsg = append(returnMsg, byte(replyMsgS[i]))
+	}
+
+	for i := 0; i < 65; i++{
+		returnSignature = append(returnSignature, byte(replySigS[i]))
+	}
+
+	return returnMsg, returnSignature
 }
