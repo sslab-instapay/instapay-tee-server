@@ -80,7 +80,7 @@ func SendAgreementRequest(pn int64, address string, w pbClient.AgreeRequestsMess
 
 	if r.Result{
 		agreementOriginalMessage, agreementSignature := convertByteToPointer(r.OriginalMessage, r.Signature)
-		C.ecall_verify_ag_res_msg_w(address, agreementOriginalMessage, agreementSignature)
+		C.ecall_verify_ag_res_msg_w(&([]C.uchar(address)[0]), agreementOriginalMessage, agreementSignature)
 	}
 
 	rwMutex.Lock()
