@@ -47,36 +47,52 @@ func SendAgreementRequest(pn int64, address string, w pbClient.AgreeRequestsMess
 	defer conn.Close()
 
 	client := pbClient.NewClientClient(conn)
+
 	var channelIds []int
 	var amounts []int
 	for _, channelPayment := range w.ChannelPayments.GetChannelPayments(){
 		channelIds = append(channelIds, int(channelPayment.ChannelId))
 		amounts = append(amounts, int(channelPayment.Amount))
 	}
-	var channelSlice []C.uint
 
-	for i := range channelIds{
+	var channelSlice []C.uint
+	for _, i := range channelIds{
 		channelSlice = append(channelSlice, C.uint(i))
 	}
 
 	var amountSlice []C.int
-
-	for i := range amounts{
+	for _, i := range amounts{
 		amountSlice = append(amountSlice, C.int(i))
 	}
+
 	var originalMessage *C.uchar
 	var signature *C.uchar
-
-	//void ecall_create_ag_req_msg_w(unsigned int payment_num, unsigned int payment_size, unsigned int *channel_ids, int *amount, unsigned char **original_msg, unsigned char **output);
+	
 	C.ecall_create_ag_req_msg_w(C.uint(pn), C.uint(len(channelSlice)), &channelSlice[0], &amountSlice[0], &originalMessage, &signature)
 
 	originalMessageByte, signatureByte := convertPointerToByte(originalMessage, signature)
-
-
 	r, err := client.AgreementRequest(context.Background(), &pbClient.AgreeRequestsMessage{PaymentNumber: int64(pn), OriginalMessage: originalMessageByte, Signature: signatureByte})
 	if err != nil {
 		log.Println(err)
 	}
+
+
+	/************** for debugging **************/
+	fmt.Printf("========= [FROM] %s ==============================\n", clientAddr)
+	oo := r.OriginalMessage[:]
+	for i := 0; i < 44; i++ {
+		fmt.Printf("%02x", oo[i])
+	}
+	fmt.Println()
+
+	ss := r.Signature[:]
+	for i := 0; i < 65; i++ {
+		fmt.Printf("%02x", ss[i])
+	}
+	fmt.Println()
+	fmt.Println("==============================================================")
+	/*******************************************/
+
 
 	if r.Result{
 		agreementOriginalMessage, agreementSignature := convertByteToPointer(r.OriginalMessage, r.Signature)
@@ -86,8 +102,6 @@ func SendAgreementRequest(pn int64, address string, w pbClient.AgreeRequestsMess
 	rwMutex.Lock()
 	C.ecall_update_sentagr_list_w(C.uint(pn), &([]C.uchar(address)[0]))
 	rwMutex.Unlock()
-
-	//fmt.Println("AGREED: " + address)
 
 	return
 }
@@ -191,13 +205,15 @@ func SendConfirmPayment(pn int, address string) {
 func WrapperAgreementRequest(pn int64, p []string, w map[string]pbClient.AgreeRequestsMessage) {
 	/* remove C's address from p */
 	var q []string
-	q = p[0:8]
+	q = p[0:2]
 
 	for _, address := range q {
 		go SendAgreementRequest(pn, address, w[address])
 	}
 
 	for C.ecall_check_unanimity_w(C.uint(pn), C.int(0)) != 1 {}
+
+	fmt.Println("[ALARM] ALL USERS AGREED")
 
 	go WrapperUpdateRequest(pn, p, w)
 }
@@ -230,9 +246,9 @@ func SearchPath(pn int64, amount int64) ([]string, map[string]pbClient.AgreeRequ
 
 	/* composing p */
 
-	p = append(p, "D03A2CC08755eC7D75887f0997195654b928893e")
-	p = append(p, "0b4161ad4f49781a821C308D672E6c669139843C")
-	p = append(p, "78902c58006916201F65f52f7834e467877f0500")
+	p = append(p, "d03a2cc08755ec7d75887f0997195654b928893e")
+	p = append(p, "0b4161ad4f49781a821c308d672e6c669139843c")
+	p = append(p, "78902c58006916201f65f52f7834e467877f0500")
 
 	/* composing w */
 
@@ -248,7 +264,7 @@ func SearchPath(pn int64, amount int64) ([]string, map[string]pbClient.AgreeRequ
 		PaymentNumber:   pn,
 		ChannelPayments: &pbClient.ChannelPayments{ChannelPayments: cps1},
 		}
-	w["D03A2CC08755eC7D75887f0997195654b928893e"] = rqm1
+	w["d03a2cc08755ec7d75887f0997195654b928893e"] = rqm1
 
 	var cps2 []*pbClient.ChannelPayment
 	cps2 = append(cps2, &pbClient.ChannelPayment{ChannelId: int64(8), Amount: amount})
@@ -257,7 +273,7 @@ func SearchPath(pn int64, amount int64) ([]string, map[string]pbClient.AgreeRequ
 		PaymentNumber:   pn,
 		ChannelPayments: &pbClient.ChannelPayments{ChannelPayments: cps2},
 		}
-	w["0b4161ad4f49781a821C308D672E6c669139843C"] = rqm2
+	w["0b4161ad4f49781a821c308d672e6c669139843c"] = rqm2
 
 	var cps3 []*pbClient.ChannelPayment
 	cps3 = append(cps3, &pbClient.ChannelPayment{ChannelId: int64(12), Amount: amount})
@@ -265,7 +281,7 @@ func SearchPath(pn int64, amount int64) ([]string, map[string]pbClient.AgreeRequ
 		PaymentNumber:   pn,
 		ChannelPayments: &pbClient.ChannelPayments{ChannelPayments: cps3},
 		}
-	w["78902c58006916201F65f52f7834e467877f0500"] = rqm3
+	w["78902c58006916201f65f52f7834e467877f0500"] = rqm3
 
 	return p, w
 }
@@ -285,7 +301,7 @@ func (s *ServerGrpc) PaymentRequest(ctx context.Context, rq *pbServer.PaymentReq
 	for i := 0; i < len(p); i++ {
 		C.ecall_add_participant_w(PaymentNum, &([]C.uchar(p[i]))[0])
 	}
-	C.ecall_update_sentagr_list_w(PaymentNum, &([]C.uchar(p[8]))[0])
+	C.ecall_update_sentagr_list_w(PaymentNum, &([]C.uchar(p[2]))[0])
 
 	go WrapperAgreementRequest(int64(PaymentNum), p, w)
 
