@@ -119,7 +119,7 @@ func SendAgreementRequest(pn int64, address string, paymentInformation PaymentIn
 	return
 }
 
-func SendUpdateRequest(pn int64, address string, w pbClient.AgreeRequestsMessage) {
+func SendUpdateRequest(pn int64, address string, paymentInformation PaymentInformation) {
 	info, err := repository.GetClientInfo(address)
 	if err != nil {
 		log.Fatal(err)
@@ -135,23 +135,8 @@ func SendUpdateRequest(pn int64, address string, w pbClient.AgreeRequestsMessage
 
 	client := pbClient.NewClientClient(conn)
 
-	var channelIds []int
-	var amounts []int
-	for _, channelPayment := range w.ChannelPayments.GetChannelPayments() {
-		channelIds = append(channelIds, int(channelPayment.ChannelId))
-		amounts = append(amounts, int(channelPayment.Amount))
-	}
-	var channelSlice []C.uint
-
-	for i := range channelIds {
-		channelSlice = append(channelSlice, C.uint(i))
-	}
-
-	var amountSlice []C.int
-
-	for i := range amounts {
-		amountSlice = append(amountSlice, C.int(i))
-	}
+	channelSlice := paymentInformation.ChannelInform
+	amountSlice := paymentInformation.AmountInform
 	var originalMessage *C.uchar
 	var signature *C.uchar
 
@@ -161,8 +146,7 @@ func SendUpdateRequest(pn int64, address string, w pbClient.AgreeRequestsMessage
 	originalMessageByte, signatureByte := convertPointerToByte(originalMessage, signature)
 
 	rqm := pbClient.UpdateRequestsMessage{ /* convert AgreeRequestsMessage to UpdateRequestsMessage */
-		PaymentNumber:   w.PaymentNumber,
-		ChannelPayments: w.ChannelPayments,
+		PaymentNumber:   pn,
 		OriginalMessage: originalMessageByte,
 		Signature:       signatureByte,
 	}
@@ -212,13 +196,13 @@ func SendConfirmPayment(pn int, address string) {
 	}
 }
 
-func WrapperAgreementRequest(pn int64, p []string, w map[string]PaymentInformation) {
+func WrapperAgreementRequest(pn int64, p []string, paymentInformation map[string]PaymentInformation) {
 	/* remove C's address from p */
 	var q []string
 	q = p[0:2]
 
 	for _, address := range q {
-		go SendAgreementRequest(pn, address, w[address])
+		go SendAgreementRequest(pn, address, paymentInformation[address])
 	}
 
 	for C.ecall_check_unanimity_w(C.uint(pn), C.int(0)) != 1 {
@@ -226,12 +210,12 @@ func WrapperAgreementRequest(pn int64, p []string, w map[string]PaymentInformati
 
 	fmt.Println("[ALARM] ALL USERS AGREED")
 
-	go WrapperUpdateRequest(pn, p, w)
+	go WrapperUpdateRequest(pn, p, paymentInformation)
 }
 
-func WrapperUpdateRequest(pn int64, p []string, w map[string]pbClient.AgreeRequestsMessage) {
+func WrapperUpdateRequest(pn int64, p []string, paymentInformation map[string]PaymentInformation) {
 	for _, address := range p {
-		go SendUpdateRequest(pn, address, w[address])
+		go SendUpdateRequest(pn, address, paymentInformation[address])
 	}
 
 	for C.ecall_check_unanimity_w(C.uint(pn), C.int(1)) != 1 {
