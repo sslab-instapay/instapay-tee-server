@@ -70,12 +70,43 @@ func SendAgreementRequest(pn int64, address string, w pbClient.AgreeRequestsMess
 	
 	C.ecall_create_ag_req_msg_w(C.uint(pn), C.uint(len(channelSlice)), &channelSlice[0], &amountSlice[0], &originalMessage, &signature)
 
+	/************** for debugging **************/
+	fmt.Println("==== [TO] %s (original msg) ==========", clientAddr)
+	var sig *C.uchar = originalMessage
+	hdr := reflect.SliceHeader{
+	   Data: uintptr(unsafe.Pointer(sig)),
+	   Len:  int(44),
+	   Cap:  int(44),
+	}
+ 
+	s := *(*[]C.uchar)(unsafe.Pointer(&hdr))
+	for i := 0; i < 44; i++ {
+	   fmt.Printf("%02x", s[i])
+	}
+	fmt.Println()
+	fmt.Println("====================================================")
+
+	fmt.Println("==== [TO] %s (signature) ==========", clientAddr)
+	var sig2 *C.uchar = signature
+	hdr2 := reflect.SliceHeader{
+	   Data: uintptr(unsafe.Pointer(sig2)),
+	   Len:  int(65),
+	   Cap:  int(65),
+	}
+ 
+	s2 := *(*[]C.uchar)(unsafe.Pointer(&hdr2))
+	for i := 0; i < 65; i++ {
+	   fmt.Printf("%02x", s2[i])
+	}
+	fmt.Println()
+	fmt.Println("====================================================")
+	/*******************************************/
+
 	originalMessageByte, signatureByte := convertPointerToByte(originalMessage, signature)
 	r, err := client.AgreementRequest(context.Background(), &pbClient.AgreeRequestsMessage{PaymentNumber: int64(pn), OriginalMessage: originalMessageByte, Signature: signatureByte})
 	if err != nil {
 		log.Println(err)
 	}
-
 
 	/************** for debugging **************/
 	fmt.Printf("========= [FROM] %s ==============================\n", clientAddr)
@@ -92,7 +123,6 @@ func SendAgreementRequest(pn int64, address string, w pbClient.AgreeRequestsMess
 	fmt.Println()
 	fmt.Println("==============================================================")
 	/*******************************************/
-
 
 	if r.Result{
 		agreementOriginalMessage, agreementSignature := convertByteToPointer(r.OriginalMessage, r.Signature)
